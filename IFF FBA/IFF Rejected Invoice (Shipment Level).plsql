@@ -70,8 +70,8 @@ FUNCTION TD(DT TIMESTAMP) RETURN VARCHAR2
 END;
 FUNCTION NF(NUM VARCHAR2) RETURN VARCHAR2
   IS BEGIN 
-   IF REGEXP_LIKE(NUM, '[^0-9]+')  THEN RETURN NULL;
-   ELSE RETURN TO_CHAR(NUM, 'FM999G999G999G990D00');
+   IF (VALIDATE_CONVERSION(NUM AS NUMBER) = 0)  THEN RETURN NUM;
+   ELSE RETURN TO_CHAR(ROUND(NUM,2), 'FM999G999G999G990D00');
 END IF;
 END;
 -- Creates a table with both Automatic and Manual invoices to be used in later queries for joins
@@ -261,7 +261,6 @@ INVOICE_REFNUM_CTE AS (
   GROUP BY
     FCTE.INVOICE_GID
 ),
-
 TAX_VALUES_CTE AS (
   SELECT * FROM (
     SELECT
@@ -330,7 +329,7 @@ MAIN_CTE AS
   -- ORDER RELEASE TABLE DATA  
     , (SELECT LISTAGG(REPLACE(ORL.ORDER_RELEASE_TYPE_GID,ORL.DOMAIN_NAME||'.'), ',') WITHIN GROUP( ORDER BY 1 ) FROM GLOGOWNER.ORDER_RELEASE  ORL, GLOGOWNER.ORDER_MOVEMENT OM WHERE ORL.ORDER_RELEASE_GID = OM.ORDER_RELEASE_GID AND OM.SHIPMENT_GID = S.SHIPMENT_GID )                                      ORDER_TYPE
     , (SELECT LISTAGG(''''||ORL.ORDER_RELEASE_XID||'''', ',') WITHIN GROUP( ORDER BY 1) FROM GLOGOWNER.ORDER_RELEASE  ORL, GLOGOWNER.ORDER_MOVEMENT OM WHERE ORL.ORDER_RELEASE_GID = OM.ORDER_RELEASE_GID  AND OM.SHIPMENT_GID = S.SHIPMENT_GID)                                                              ORDER_RELEASE_ID    
-    , NF(ROUND(S.TOTAL_WEIGHT, 2))|| ' '|| S.TOTAL_WEIGHT_UOM_CODE                                                                                GROSS_WEIGHT
+    , NF(S.TOTAL_WEIGHT)|| ' '|| S.TOTAL_WEIGHT_UOM_CODE                                                                                         GROSS_WEIGHT
   -- INVOICE TABLE DATA  
     , INV.INVOICE_NUMBER                              CARRIER_INVOICE_NUMBER
     , INV.NET_AMOUNT_DUE_GID                          OTM_INVOICE_CURRENCY
@@ -379,7 +378,7 @@ MAIN_CTE AS
     , CASE WHEN ROUND(SCCTE.APPROVED_INVOICE_NET_AMOUNT - S.TOTAL_ACTUAL_COST ,2) <0 THEN 'YES' ELSE 'NO' END                                     UNDER_BILLED  
   --? Changes between Order and Shipment Reports 
   -- ALLOCATION SUB QUERIES    
-    , (SELECT ROUND(SUM( A.TOTAL_ALLOC_COST / TO_CURRENCY('EUR' , A.TOTAL_COST_CURRENCY_GID, A.EXCHANGE_RATE_DATE, A.EXCHANGE_RATE_GID)*TO_CURRENCY( 'EUR', SRCTE.OTM_CURRENCY, A.EXCHANGE_RATE_DATE, A.EXCHANGE_RATE_GID)),2) FROM GLOGOWNER.ALLOCATION_BASE AB, GLOGOWNER.ALLOCATION  A WHERE AB.ALLOC_TYPE_QUAL_GID = 'PLANNING' AND AB.SHIPMENT_GID = S.SHIPMENT_GID AND A.SHIPMENT_GID = AB.SHIPMENT_GID AND A.ALLOC_SEQ_NO = AB.ALLOC_SEQ_NO) APPORTIONED_OTM_SHIPMENT
+    , (SELECT ROUND(SUM( A.COST / TO_CURRENCY('EUR' , A.COST_CURRENCY_GID, A.EXCHANGE_RATE_DATE, A.EXCHANGE_RATE_GID)*TO_CURRENCY( 'EUR', SRCTE.OTM_CURRENCY, A.EXCHANGE_RATE_DATE, A.EXCHANGE_RATE_GID)),2) FROM GLOGOWNER.ALLOCATION_ORDER_RELEASE_D A WHERE A.SHIPMENT_GID = S.SHIPMENT_GID) APPORTIONED_OTM_SHIPMENT
   -- SHIPMENT REFNUM CTE SUB QUERIES
     , SRCTE.OTM_CURRENCY                              MASTER_RATE_CURRENCY            
     , SRCTE.FBA_PROCESS_MODE
@@ -510,15 +509,15 @@ SELECT
   , NF(ACTUAL_CHARGEABLE_WEIGHT)                      "Base Actual Weight KG"
   , NF(SHIPMENT_BASE_COST)                            "OTM Shipment Freight Cost (BASE)"
   , NF(FUEL_SURCHARGE_COST)                           "OTM Shipment Fuel Surcharge Cost"
-  , NF(ROUND(DELAYS_COST, 2))                         "OTM Shipment Delays total (Inc demurrage/waiting time)"
-  , NF(ROUND(CANCELLATION_CHARGE, 2))                 "OTM Shipment Cancellation Cost"
-  , NF(ROUND(MISCELLANEOUS, 2))                       "OTM Shipment Miscellaneous Cost"
-  , NF(ROUND(SHIPMENT_ACCESSORIAL_COST,2))            "OTM Shipment Freight Accessorial Cost"
+  , NF(DELAYS_COST)                                   "OTM Shipment Delays total (Inc demurrage/waiting time)"
+  , NF(CANCELLATION_CHARGE)                           "OTM Shipment Cancellation Cost"
+  , NF(MISCELLANEOUS)                                 "OTM Shipment Miscellaneous Cost"
+  , NF(SHIPMENT_ACCESSORIAL_COST)                     "OTM Shipment Freight Accessorial Cost"
   , NF(SHIPMENT_TOTAL_ACTUAL_COST)                    "OTM Shipment Total Freight Cost"
   , NF(SHIPMENT_TOTAL_TAX)                            "OTM Order / Shipment Total Tax Value"
   , NF(OTM_SHIPMENT_APPROVED_VALUE)                   "OTM Shipment Approved Value"
   , NF(OTM_SHIPMENT_ACCRUAL_VALUE)                    "OTM Shipment Accrual Value"
---, NF(ROUND(UNDER_BILLED_AMOUNT,2))                  "OTM Shipment Underbilled Amount"
+--, NF(UNDER_BILLED_AMOUNT)                           "OTM Shipment Underbilled Amount"
 --, NF(OTM_SHIPMENT_REJECTED_VALUE)                   "OTM Shipment Rejected Value"
   , NF(APPORTIONED_OTM_SHIPMENT)                      "OTM Shipment Apportioned Value"
   , MASTER_RATE_CURRENCY                              "OTM Shipment Currency"
