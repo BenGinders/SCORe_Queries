@@ -329,7 +329,7 @@ MAIN_CTE AS
   -- ORDER RELEASE SUB QUERIES
       , (SELECT LISTAGG(REPLACE(ORL.ORDER_RELEASE_TYPE_GID,ORL.DOMAIN_NAME||'.'), ',') WITHIN GROUP( ORDER BY 1 ) FROM GLOGOWNER.ORDER_RELEASE  ORL, GLOGOWNER.ORDER_MOVEMENT OM WHERE ORL.ORDER_RELEASE_GID = OM.ORDER_RELEASE_GID AND OM.SHIPMENT_GID = S.SHIPMENT_GID )                                                              ORDER_TYPE
       , (SELECT LISTAGG(''''||ORL.ORDER_RELEASE_XID||'''', ',') WITHIN GROUP( ORDER BY 1) FROM GLOGOWNER.ORDER_RELEASE  ORL, GLOGOWNER.ORDER_MOVEMENT OM WHERE ORL.ORDER_RELEASE_GID = OM.ORDER_RELEASE_GID  AND OM.SHIPMENT_GID = S.SHIPMENT_GID)                                                                                      ORDER_RELEASE_ID
-      , NF(S.TOTAL_WEIGHT)||' '|| S.TOTAL_WEIGHT_UOM_CODE                                                                                         GROSS_WEIGHT
+      , NF(ROUND(S.TOTAL_WEIGHT,2))||' '|| S.TOTAL_WEIGHT_UOM_CODE                                                                                         GROSS_WEIGHT
     -- INVOICE TABLE DATA
       , INV.INVOICE_NUMBER                              CARRIER_INVOICE_NUMBER
       , INV.NET_AMOUNT_DUE_GID                          OTM_INVOICE_CURRENCY
@@ -379,6 +379,7 @@ MAIN_CTE AS
     --? Changes between Order and Shipment Reports 
     -- ALLOCATION SUB QUERIES     
       , (SELECT ROUND(SUM( A.COST / TO_CURRENCY('EUR' , A.COST_CURRENCY_GID, A.EXCHANGE_RATE_DATE, A.EXCHANGE_RATE_GID)*TO_CURRENCY( 'EUR', SRCTE.OTM_CURRENCY, A.EXCHANGE_RATE_DATE, A.EXCHANGE_RATE_GID)),2) FROM GLOGOWNER.ALLOCATION_ORDER_RELEASE_D A WHERE A.SHIPMENT_GID = S.SHIPMENT_GID) APPORTIONED_OTM_SHIPMENT
+    --  , (SELECT ROUND(SUM( A.TOTAL_ALLOC_COST / TO_CURRENCY('EUR' , A.TOTAL_COST_CURRENCY_GID, A.EXCHANGE_RATE_DATE, A.EXCHANGE_RATE_GID)*TO_CURRENCY( 'EUR', SRCTE.OTM_CURRENCY, A.EXCHANGE_RATE_DATE, A.EXCHANGE_RATE_GID)),2) FROM GLOGOWNER.ALLOCATION_BASE AB, GLOGOWNER.ALLOCATION  A WHERE AB.ALLOC_TYPE_QUAL_GID = 'PLANNING' AND AB.SHIPMENT_GID = S.SHIPMENT_GID AND A.SHIPMENT_GID = AB.SHIPMENT_GID AND A.ALLOC_SEQ_NO = AB.ALLOC_SEQ_NO) APPORTIONED_OTM_SHIPMENT
     -- SHIPMENT REFNUM CTE SUB QUERIES
       , SRCTE.OTM_CURRENCY                              MASTER_RATE_CURRENCY 
       , SRCTE.FBA_PROCESS_MODE
@@ -518,8 +519,8 @@ SELECT
     , NF(SHIPMENT_TOTAL_TAX)                            "OTM Order / Shipment Total Tax Value"
     , NF(OTM_SHIPMENT_APPROVED_VALUE)                   "OTM Shipment Approved Value"
     , NF(OTM_SHIPMENT_ACCRUAL_VALUE)                    "OTM Shipment Accrual Value"
-  --, NF(UNDER_BILLED_AMOUNT)                           "OTM Shipment Underbilled Amount"
-  --, NF(OTM_SHIPMENT_REJECTED_VALUE)                   "OTM Shipment Rejected Value"
+    , NF(UNDER_BILLED_AMOUNT)                           "OTM Shipment Underbilled Amount"
+    , NF(OTM_SHIPMENT_REJECTED_VALUE)                   "OTM Shipment Rejected Value"
     , NF(APPORTIONED_OTM_SHIPMENT)                      "OTM Shipment Apportioned Value"
     , MASTER_RATE_CURRENCY                              "OTM Shipment Currency"
     , NF(OTM_INVOICE_AMOUNT_NET)                        "Carrier Invoice Amount(Net)"
@@ -549,7 +550,7 @@ SELECT
     , RETENTION_AMOUNT                                  "Carrier Invoice Retention Value"
     , WITHHOLDING_PERCENTAGE                            "Carrier Invoice Withholding Tax Percentage"        
     , WITHHOLDING_AMOUNT                                "Carrier Invoice Withholding Tax Value"
-    , NF(CARRIER_INVOICE_VALUE_MATCHED)                 "Carrier Invoice Net Value Matched against Order / Shipment Net Value"
+    , NF(OTM_INVOICE_AMOUNT_NET)                        "Carrier Invoice Net Value Matched against Order / Shipment Net Value"
     , OTM_INVOICE_CURRENCY                              "Carrier Invoice Shipment Currency"
     , COST_OK                                           "Cost OK Milestone"
     , TD(FINAL_COST_OK_DATE)                            "Cost Ok Date"

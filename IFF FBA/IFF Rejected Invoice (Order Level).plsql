@@ -329,7 +329,7 @@ MAIN_CTE AS
     -- ORDER RELEASE TABLE DATA   
     , ORL.ORDER_RELEASE_XID                           ORDER_RELEASE_ID
     , RD(ORL.ORDER_RELEASE_TYPE_GID)                  ORDER_TYPE                                                                    
-    , NF(ORL.TOTAL_WEIGHT)||' '|| ORL.TOTAL_WEIGHT_UOM_CODE                                                                                     GROSS_WEIGHT
+    , NF(ROUND(ORL.TOTAL_WEIGHT,2))||' '|| ORL.TOTAL_WEIGHT_UOM_CODE                                                                                     GROSS_WEIGHT
     -- INVOICE TABLE DATA
     , INV.INVOICE_NUMBER                              CARRIER_INVOICE_NUMBER
     , INV.NET_AMOUNT_DUE_GID                          OTM_INVOICE_CURRENCY
@@ -550,7 +550,7 @@ SELECT
   , RETENTION_AMOUNT                                  "Carrier Invoice Retention Value"
   , WITHHOLDING_PERCENTAGE                            "Carrier Invoice Withholding Tax Percentage"        
   , WITHHOLDING_AMOUNT                                "Carrier Invoice Withholding Tax Value"
-  , NF(CARRIER_INVOICE_VALUE_MATCHED)                 "Carrier Invoice Net Value Matched against Order / Shipment Net Value"
+  , NF(OTM_INVOICE_AMOUNT_NET)                        "Carrier Invoice Net Value Matched against Order / Shipment Net Value"
   , OTM_INVOICE_CURRENCY                              "Carrier Invoice Shipment Currency"
   , COST_OK                                           "Cost OK Milestone"
   , TD(FINAL_COST_OK_DATE)                            "Cost Ok Date"

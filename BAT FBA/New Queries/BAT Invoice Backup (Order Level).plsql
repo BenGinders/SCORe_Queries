@@ -22,16 +22,11 @@
       --       {CARRIER NAME}
   -- ! ATTRIBUTES 
     --  ? SHIPMENT 
-      --      S.ATTRIBUTE1        -  OTM_SHIPMENT_STATUS
       --      S.ATTRIBUTE_DATE6   -  SHIPMENT_DELIVERY_DATE
       --      S.ATTRIBUTE_DATE10  -  SHIPMENT_COLLECTION_DATE
       --      S.ATTRIBUTE_DATE5   -  OTM_COST_OK_DATE
       --      S.ATTRIBUTE9        -  FBA_RESPONSIBILITY_STATUS
     --  ? INVOICE
-      --      INV.ATTRIBUTE11     - OTM_INVOICE_AMOUNT_NET
-      --      INV.ATTRIBUTE12     - VAT_AMOUNT
-      --      INV.ATTRIBUTE13     - OTM_INVOICE_AMOUNT_GROSS
-      --      INV.ATTRIBUTE14     - INVOICE_CURRENCY
       --      INV.ATTRIBUTE2      - OTM_INVOICE_STATUS,
   -- ! REFRENCE NUMBERS / REMARKS
     --  ? SHIPMENT REFNUM
@@ -62,7 +57,7 @@ FUNCTION TO_CURRENCY(FROM_CURRENCY VARCHAR2, TO_CURRENCY  VARCHAR2, EXCH_RATE_DA
 RETURN NEW_VALUE;
 END; 
 FUNCTION RD(GID VARCHAR2) RETURN VARCHAR2
-  IS BEGIN RETURN REPLACE(GID, 'BAT'||'.');
+  IS BEGIN RETURN REPLACE(GID, {DOMAIN}||'.');
 END;
 FUNCTION TD(DT TIMESTAMP) RETURN VARCHAR2
   IS BEGIN RETURN TO_CHAR(DT, 'DD/MM/YYYY hh24:mi:ss');
@@ -77,7 +72,6 @@ END;
 INV_SHIP_CTE AS
   ( 
     SELECT
-    DISTINCT
         OM.SHIPMENT_GID
         , INVS.INVOICE_GID
         , OM.ORDER_RELEASE_GID
@@ -85,7 +79,7 @@ INV_SHIP_CTE AS
           GLOGOWNER.INVOICE_SHIPMENT                    INVS
         , GLOGOWNER.ORDER_MOVEMENT                      OM
         , GLOGOWNER.INVOICE                             INV
-        , INVOICE_REMARK                                IR
+        , GLOGOWNER.INVOICE_REMARK                      IR
     WHERE
         OM.DOMAIN_NAME                                  = {DOMAIN}
         AND INV.ATTRIBUTE2 (+)                          NOT IN ('ARCHIVED', 'ARCHIVED_RPA_ERROR')
@@ -97,7 +91,6 @@ INV_SHIP_CTE AS
         AND IR.REMARK_TEXT                              IS NULL
 UNION        
     SELECT
-    DISTINCT
         OM.SHIPMENT_GID
         , IR.INVOICE_GID
         , OM.ORDER_RELEASE_GID
@@ -113,27 +106,10 @@ UNION
         AND INV.ATTRIBUTE2                              NOT IN ('ARCHIVED', 'ARCHIVED_RPA_ERROR')
         AND OM.DOMAIN_NAME                              = {DOMAIN}
   ),  
-APPR_INVOICE_CTE AS (
-  SELECT
-      ISCTE.SHIPMENT_GID
-    , MAX(INVS.ATTRIBUTE_DATE8)                       INVOICE_APPROVED_DATE
-    , MAX(INVS.ATTRIBUTE_DATE1)                       INVOICE_REJECTED_DATE
-    , SUM(CASE WHEN INVS.ATTRIBUTE_DATE8 IS NOT NULL THEN INVS.NET_AMOUNT_DUE END)                                                                                                 APPROVED_INVOICE_NET_AMOUNT
-  FROM 
-      INVOICE                                         INVS
-    , INV_SHIP_CTE                                    ISCTE
-  WHERE 
-      INVS.INVOICE_GID                                = ISCTE.INVOICE_GID
-  GROUP BY 
-    ISCTE.SHIPMENT_GID
-  , INVS.DOMAIN_NAME 
-),
 SHIP_REFNUM_CTE AS (
   SELECT
     SR.SHIPMENT_GID
-  , MAX(CASE SR.SHIPMENT_REFNUM_QUAL_GID                WHEN SR.DOMAIN_NAME ||'.EUR_EXCHANGE_RATE' THEN TO_CHAR(SHIPMENT_REFNUM_VALUE,'FM9D99999')  END)                         PMER_EXCHANGE_RATE 
-  , MAX(CASE SR.SHIPMENT_REFNUM_QUAL_GID                WHEN SR.DOMAIN_NAME ||'.LANE_ID'           THEN SHIPMENT_REFNUM_VALUE END)                                               LANE_ID         
-  , LISTAGG(DISTINCT CASE SR.SHIPMENT_REFNUM_QUAL_GID   WHEN SR.DOMAIN_NAME ||'.LLP_RESPONSIBILITY'THEN SHIPMENT_REFNUM_VALUE END)                                               FBA_RESPONSIBILITY_STATUS
+  , MAX(CASE SR.SHIPMENT_REFNUM_QUAL_GID                WHEN SR.DOMAIN_NAME ||'.GBP_EXCH_RATE' THEN TO_CHAR(SHIPMENT_REFNUM_VALUE,'FM9D99999')  END)                             PMER_EXCHANGE_RATE 
   , MAX(CASE SR.SHIPMENT_REFNUM_QUAL_GID                WHEN SR.DOMAIN_NAME ||'.FBA_PROCESS_MODE'  THEN SHIPMENT_REFNUM_VALUE END)                                               FBA_PROCESS_MODE
   , SUM(CASE                                            WHEN SR.SHIPMENT_REFNUM_QUAL_GID LIKE '%TAX_AMOUNT%'THEN SHIPMENT_REFNUM_VALUE END)                                      SHIPMENT_TOTAL_TAX 
   , MAX(CASE SR.SHIPMENT_REFNUM_QUAL_GID                WHEN SR.DOMAIN_NAME ||'.OTM_CURRENCY'      THEN SHIPMENT_REFNUM_VALUE END)                                               OTM_CURRENCY
@@ -144,46 +120,7 @@ SHIP_REFNUM_CTE AS (
   GROUP BY 
       SR.SHIPMENT_GID
 ),
-SHIP_COST_CTE AS (
-  SELECT
-      SC.SHIPMENT_GID
-    , (SC.COST / TO_CURRENCY('EUR' , sc.COST_GID, SC.EXCHANGE_RATE_DATE, SC.EXCHANGE_RATE_GID))*TO_CURRENCY( 'EUR', SR.OTM_CURRENCY , SC.EXCHANGE_RATE_DATE, SC.EXCHANGE_RATE_GID) COST
-    , SC.INSERT_DATE                                  INSERT_DATE
-    , SC.DOMAIN_NAME
-    , SC.COST_TYPE
-    , SC.ACCESSORIAL_CODE_GID
-    , AICTE.INVOICE_APPROVED_DATE
-    , AICTE.INVOICE_REJECTED_DATE
-    , AICTE.APPROVED_INVOICE_NET_AMOUNT
-    , S.TRANSPORT_MODE_GID
-  FROM 
-      GLOGOWNER.SHIPMENT_COST                         SC 
-    , GLOGOWNER.SHIPMENT                              S
-    , APPR_INVOICE_CTE                                AICTE
-    , SHIP_REFNUM_CTE                                 SR
-  WHERE 
-    SC.SHIPMENT_GID                                   = S.SHIPMENT_GID  
-    AND SC.SHIPMENT_GID                               = AICTE.SHIPMENT_GID (+)
-    AND SC.SHIPMENT_GID                               = SR.SHIPMENT_GID
-    AND SC.DOMAIN_NAME                                = {DOMAIN} 
-  ORDER BY 
-      SC.SHIPMENT_GID DESC
-),
-SHIP_COST_SPLIT AS (
-SELECT
-      SC.SHIPMENT_GID
-    , SUM(SC.COST)                                    COST
-    , SUM(CASE WHEN  SC.INSERT_DATE <= SC.INVOICE_APPROVED_DATE OR (RD(SC.TRANSPORT_MODE_GID) NOT IN ('OCEAN-FCL','OCEAN-LCL','OCEAN','VESSEL-CO','OCEAN-FCL-ROAD','OCEAN-LCL-ROAD') AND SC.INVOICE_APPROVED_DATE IS NOT NULL) THEN SC.COST END )                                                                                  OTM_SHIPMENT_APPROVED_VALUE
-    , SUM(CASE WHEN  SC.INSERT_DATE <= SC.INVOICE_REJECTED_DATE OR (RD(SC.TRANSPORT_MODE_GID) NOT IN ('OCEAN-FCL','OCEAN-LCL','OCEAN','VESSEL-CO','OCEAN-FCL-ROAD','OCEAN-LCL-ROAD') AND SC.INVOICE_REJECTED_DATE IS NOT NULL) THEN SC.COST END )                                                                                  OTM_SHIPMENT_REJECTED_VALUE
-    , SUM(CASE WHEN (SC.INSERT_DATE >= SC.INVOICE_APPROVED_DATE OR SC.INVOICE_APPROVED_DATE IS NULL) OR (RD(SC.TRANSPORT_MODE_GID) NOT IN ('OCEAN-FCL','OCEAN-LCL','OCEAN','VESSEL-CO','OCEAN-FCL-ROAD','OCEAN-LCL-ROAD') AND SC.INVOICE_APPROVED_DATE IS NULL) THEN SC.COST END)                                                  OTM_SHIPMENT_ACCRUAL_VALUE
-    , SUM(SC.APPROVED_INVOICE_NET_AMOUNT)             APPROVED_INVOICE_NET_AMOUNT
-  FROM 
-    SHIP_COST_CTE  SC
-  GROUP BY 
-    SC.SHIPMENT_GID
-  ORDER BY 
-    SC.SHIPMENT_GID DESC
-),
+
 -- Filters all data based on input parameters and predefined filters
 FILTER_CTE AS 
   (
@@ -191,46 +128,56 @@ FILTER_CTE AS
       ISCTE.SHIPMENT_GID
     , ISCTE.ORDER_RELEASE_GID
     , ISCTE.INVOICE_GID
-  , (SELECT MAX(IES.EVENT_RECEIVED_DATE) FROM GLOGOWNER.IE_SHIPMENTSTATUS IES WHERE RD(IES.STATUS_CODE_GID) = 'COST_OK' AND IES.SHIPMENT_GID =ISCTE.SHIPMENT_GID)                                                                         FINAL_COST_OK_DATE
-  , (SELECT MAX(IES.EVENT_RECEIVED_DATE) FROM GLOGOWNER.IE_SHIPMENTSTATUS IES WHERE RD(IES.STATUS_CODE_GID) = 'DEPARTED_ORIGIN_PORT_COST_OK' AND IES.SHIPMENT_GID =ISCTE.SHIPMENT_GID)                                                    ORIGIN_COST_OK_DATE
+    , (SELECT MAX(IES.EVENTDATE) FROM GLOGOWNER.IE_SHIPMENTSTATUS IES, GLOGOWNER.SS_STATUS_HISTORY SSH WHERE IES.STATUS_CODE_GID = {DOMAIN}||'.DELIVERY CONFIRMED(POD RECEIVED)' AND IES.I_TRANSACTION_NO = SSH.I_TRANSACTION_NO  AND SSH.SHIPMENT_GID =ISCTE.SHIPMENT_GID)                                                DELIVERY_CONFIRMED_DATE             
     FROM
-      INV_SHIP_CTE                                    ISCTE
-      , GLOGOWNER.INVOICE_STATUS                      INVST      
+       INV_SHIP_CTE                                   ISCTE
+      , GLOGOWNER.INVOICE_STATUS                      INVST     
+      , GLOGOWNER.SHIPMENT                            S 
     WHERE 
       INVST.INVOICE_GID                               = ISCTE.INVOICE_GID
+      AND ISCTE.SHIPMENT_GID                          = S.SHIPMENT_GID
+      AND S.ATTRIBUTE4                                = 'ROC'
       AND INVST.DOMAIN_NAME                           = {DOMAIN}
       AND INVST.STATUS_TYPE_GID                       = {DOMAIN}||'.APPROVAL'
       AND INVST.STATUS_VALUE_GID                      IN ({DOMAIN}||'.APPROVAL_APPROVED_AUTO',{DOMAIN}||'.APPROVAL_APPROVED_MANUAL')
-      AND TRUNC(INVST.UPDATE_DATE)                    BETWEEN TRUNC(TO_DATE(TO_CHAR({APPROVED FROM DATE},'YYYY-MM-DD HH24:MI:SS'),'YYYY-MM-DD HH24:MI:SS'))
+      AND INVST.UPDATE_DATE                           BETWEEN TRUNC(TO_DATE(TO_CHAR({APPROVED FROM DATE},'YYYY-MM-DD HH24:MI:SS'),'YYYY-MM-DD HH24:MI:SS'))
                                                       AND TRUNC(TO_DATE(TO_CHAR({APPROVED TO DATE},'YYYY-MM-DD HH24:MI:SS'),'YYYY-MM-DD HH24:MI:SS'))
       AND (TRUNC(TO_DATE(TO_CHAR({APPROVED TO DATE},'YYYY-MM-DD HH24:MI:SS'),'YYYY-MM-DD HH24:MI:SS'))
           - TRUNC(TO_DATE(TO_CHAR({APPROVED FROM DATE},'YYYY-MM-DD HH24:MI:SS'),'YYYY-MM-DD HH24:MI:SS'))) <= 365
-),    
+),  
+SHIP_COST_CTE AS (
+  SELECT
+      SC.SHIPMENT_GID
+    , (SC.COST / TO_CURRENCY('EUR' , sc.COST_GID, SC.EXCHANGE_RATE_DATE, SC.EXCHANGE_RATE_GID))*TO_CURRENCY( 'EUR', S.CURRENCY_GID , SC.EXCHANGE_RATE_DATE, SC.EXCHANGE_RATE_GID) COST
+    , SC.COST_TYPE
+    , SC.ACCESSORIAL_CODE_GID
+    , SC.ADJUSTMENT_REASON_GID
+  FROM 
+      GLOGOWNER.SHIPMENT_COST                         SC 
+    , GLOGOWNER.SHIPMENT                              S
+  WHERE 
+    SC.SHIPMENT_GID                                   = S.SHIPMENT_GID  
+    AND SC.DOMAIN_NAME                                = {DOMAIN} 
+    AND                                               EXISTS (SELECT 1 FROM FILTER_CTE FCTE WHERE FCTE.SHIPMENT_GID = SC.SHIPMENT_GID) 
+),
 COST_CATEGORY_CTE AS
 (
   SELECT 
-    SHIPMENT_GID
-    , SUM(CASE WHEN CODE =  'BASE'     THEN COST END) BASE_COST
-    , SUM(CASE WHEN CODE =  'FUEL'     THEN COST END) FUEL_SURCHARGE_COST
-    , SUM(CASE WHEN CODE =  'DELAY'    THEN COST END) DELAYS_COST
-    , SUM(CASE WHEN CODE =  'CANCEL'   THEN COST END) CANCELLATION_CHARGE
-    , SUM(CASE WHEN CODE =  'OTHER'    THEN COST END) MISCELLANEOUS
-    , SUM(CASE WHEN CODE != 'BASE'     THEN COST END) ACCESSORIAL
-  FROM 
-    (
-      SELECT
-          SHIPMENT_GID
-        , CASE WHEN COST_TYPE = 'B'    THEN 'BASE'
-               WHEN RD(ACCESSORIAL_CODE_GID)  LIKE '%FUEL%'         OR ACCESSORIAL_CODE_GID LIKE '%FSC%'            OR ACCESSORIAL_CODE_GID LIKE '%BAF%' THEN 'FUEL'
-               WHEN RD(ACCESSORIAL_CODE_GID)  LIKE '%CANCELLATION%' OR ACCESSORIAL_CODE_GID = 'CANC_CHARGES'                                             THEN 'CANCEL'
-               WHEN RD(ACCESSORIAL_CODE_GID) IN ('.LEG2_O_DEM_FEE_PER_DAY','.LEG2_IMP_DET_FEES_PER_DAY','.LEG2_IMP_DEM_FEES_PER_DAY','.WAITING_TIME_CHARGE_PER_HR','.DETENTION_DEMURRAGE','.LEG2_O_DET_FEE_PER_DAY') THEN 'DELAY'
-               ELSE 'OTHER' END                       CODE
-        , COST                                     
-      FROM 
-        SHIP_COST_CTE
-    )
-  GROUP BY 
-    SHIPMENT_GID
+    SC.SHIPMENT_GID
+    , SUM(CASE SC.COST_TYPE WHEN 'B' THEN COST END)                                                                                                       BASE_COST
+    , SUM(CASE WHEN SC.ACCESSORIAL_CODE_GID LIKE '%FUEL%' OR SC.ACCESSORIAL_CODE_GID LIKE '%FSC%' OR SC.ACCESSORIAL_CODE_GID LIKE '%BAF%' THEN COST END)  FUEL_SURCHARGE_COST
+    , SUM(CASE WHEN SC.ADJUSTMENT_REASON_GID IN ('B1','B2','B3','B5','B7','B9','B10','A4','A5') THEN COST END)                                            DELAYS_COST
+    , SUM(CASE WHEN SC.ADJUSTMENT_REASON_GID IN ('A1','A2','A3','A4','A5') THEN COST END)                                                                 CANCELLATION_CHARGE
+    , SUM(CASE WHEN SC.COST_TYPE != 'B' 
+            AND (SC.ACCESSORIAL_CODE_GID NOT LIKE '%FUEL%' AND SC.ACCESSORIAL_CODE_GID NOT LIKE '%FSC%' AND SC.ACCESSORIAL_CODE_GID NOT LIKE '%BAF%') 
+            AND SC.ADJUSTMENT_REASON_GID NOT IN ('A1','A2','A3','A4','A5', 'B1','B2','B3','B5','B7','B9','B10') THEN COST END)                            MISCELLANEOUS
+    , SUM(CASE WHEN SC.COST_TYPE != 'B' THEN COST END)                                                                                                    ACCESSORIAL
+ FROM 
+    SHIP_COST_CTE                                     SC
+ GROUP BY 
+    SC.SHIPMENT_GID
+
+
 ),
 -- Creates a location table to be used for source, destination, involved party, bill to and service provider location details
 LOCATION_CTE AS 
@@ -247,67 +194,41 @@ LOCATION_CTE AS
     WHERE 
       DOMAIN_NAME                                     = {DOMAIN}
   ),
-INVOICE_REFNUM_CTE AS (
+INVOICE_REMARK_CTE AS (
   SELECT 
       FCTE.INVOICE_GID
-    , MAX(CASE WHEN IRC.INVOICE_REFNUM_QUAL_GID = {DOMAIN} ||'.CELATON_TOTAL_COST_WITH_VAT'  THEN SUBSTR(IRC.INVOICE_REFNUM_VALUE,1,LENGTH(IRC.INVOICE_REFNUM_VALUE)-4)  END)                                                                 CELATON_TOTAL_COST_WITH_VAT 
-    , MAX(CASE WHEN IRC.INVOICE_REFNUM_QUAL_GID = {DOMAIN} ||'.CELATON_NET_COST'             THEN SUBSTR(IRC.INVOICE_REFNUM_VALUE,1,LENGTH(IRC.INVOICE_REFNUM_VALUE)-4)  END)                                                                 CELATON_NET_COST
+    , MAX(CASE WHEN IRC.REMARK_QUAL_IDENTIFIER = {DOMAIN} ||'.CELATON_TOTAL_COST_WITH_VAT'  THEN SUBSTR(IRC.REMARK_TEXT,1,LENGTH(IRC.REMARK_TEXT)-4)  END)                                                                                    CELATON_TOTAL_COST_WITH_VAT
+    , MAX(CASE WHEN IRC.REMARK_QUAL_IDENTIFIER = {DOMAIN} ||'.CELATON_NET_COST'             THEN SUBSTR(IRC.REMARK_TEXT,1,LENGTH(IRC.REMARK_TEXT)-4)  END)                                                                                    CELATON_NET_COST
   FROM 
-      GLOGOWNER.INVOICE_REFNUM                        IRC
-    , FILTER_CTE                                      FCTE
+    GLOGOWNER.INVOICE_REMARK                          IRC
+  , FILTER_CTE                                        FCTE
   WHERE
     IRC.DOMAIN_NAME                                   = {DOMAIN}
-    AND( IRC.INVOICE_REFNUM_QUAL_GID                  IN ({DOMAIN} ||'.CELATON_TOTAL_COST_WITH_VAT',{DOMAIN} ||'.CELATON_NET_COST') OR  IRC.INVOICE_REFNUM_QUAL_GID LIKE {DOMAIN} ||'.CELATON_TAX_AMOUNT%' OR IRC.INVOICE_REFNUM_QUAL_GID LIKE {DOMAIN} ||'.OTM_TAX_AMOUNT%' )
+    AND( IRC.REMARK_QUAL_IDENTIFIER                   IN ({DOMAIN} ||'.CELATON_TOTAL_COST_WITH_VAT',{DOMAIN} ||'.CELATON_NET_COST'))
     AND FCTE.INVOICE_GID =                            IRC.INVOICE_GID 
   GROUP BY
     FCTE.INVOICE_GID
 ),
-TAX_VALUES_CTE AS (
-  SELECT * FROM (
-    SELECT
-        COALESCE(PARENT_INVOICE_GID,I.INVOICE_GID)    PARENT_INVOICE_GID
-      , TT.INVOICE_REFNUM_VALUE                       TAX_TYPE
-      , NF(TV.INVOICE_REFNUM_VALUE)                   TAX_VALUE
-      , NF(TP.INVOICE_REFNUM_VALUE)                   TAX_PERCENTAGE
-    FROM
-        GLOGOWNER.INVOICE                             I
-      , GLOGOWNER.INVOICE_REFNUM                      TT
-      , GLOGOWNER.INVOICE_REFNUM                      TV
-      , GLOGOWNER.INVOICE_REFNUM                      TP
-    WHERE
-        I.DOMAIN_NAME                                   ={DOMAIN}
-    --Tax Type joins
-        AND I.INVOICE_GID                               = TT.INVOICE_GID
-        AND REGEXP_LIKE(TT.INVOICE_REFNUM_QUAL_GID ,    '(^'||{DOMAIN}||'.OTM|^'||{DOMAIN}||'.CELATON)+.*TAX_TYPE') 
-    --Tax Value Joins
-        AND  TT.INVOICE_GID                             = TV.INVOICE_GID 
-        AND TV.INVOICE_REFNUM_QUAL_GID                  LIKE  '%TAX_AMOUNT%'
-        AND SUBSTR(TT.INVOICE_REFNUM_QUAL_GID,-1)       = SUBSTR(TV.INVOICE_REFNUM_QUAL_GID,-1)
-    --Tax Percentage Joins
-        AND  TT.INVOICE_GID                             = TP.INVOICE_GID 
-        AND REGEXP_LIKE(TP.INVOICE_REFNUM_QUAL_GID ,    '(^'||{DOMAIN}||'.OTM|^'||{DOMAIN}||'.CELATON)+.*PERCENTAGE') 
-        AND SUBSTR(TT.INVOICE_REFNUM_QUAL_GID,-1)       = SUBSTR(TP.INVOICE_REFNUM_QUAL_GID,-1)
-  ) T 
-  PIVOT(
-      MAX(TAX_VALUE)                                  AS AMOUNT
-    , MAX(TAX_PERCENTAGE)                             AS PERCENTAGE
-  FOR TAX_TYPE IN ( 
-        'IIBB CABA'                                   IIBB_CABA
-      , 'IIBB BA'                                     IIBB_BA
-      , 'CGST'                                        CGST
-      , 'IGST'                                        IGST
-      , 'SGST'                                        SGST
-      , 'PIS'                                         PIS
-      , 'ISS'                                         ISS
-      , 'COFINS'                                      COFINS
-      , 'VAT'                                         VATS
-      , 'RETENTION'                                   RETENTION
-      , 'WITHHOLDING'                                 WITHHOLDING
-      , 'IOF'                                         IOF 
-      )
-  )
-  ORDER BY 
-   PARENT_INVOICE_GID
+ALLOCATION_CTE AS (
+    SELECT 
+        SHIPMENT_GID
+      , ORDER_RELEASE_GID
+      , CASE WHEN TOTAL_WEIGHT  >0 THEN COST_APPORTIONED_WEIGHT ELSE ORDER_COUNT_APPORTIONMENT  END                                               COST_APPORTION_PERCENTAGE
+    FROM (
+        SELECT 
+            OM.SHIPMENT_GID 
+          , ORL.ORDER_RELEASE_GID 
+          , ORL.TOTAL_WEIGHT
+          , SUM(ORL.TOTAL_WEIGHT) OVER (PARTITION BY OM.ORDER_RELEASE_GID)  / NULLIF(SUM(ORL.TOTAL_WEIGHT) OVER (PARTITION BY OM.SHIPMENT_GID),0)  COST_APPORTIONED_WEIGHT
+          , 1/COUNT(ORL.ORDER_RELEASE_GID) OVER (PARTITION BY OM.SHIPMENT_GID)                                                                     ORDER_COUNT_APPORTIONMENT
+        FROM 
+            GLOGOWNER.ORDER_RELEASE                       ORL 
+          , GLOGOWNER.ORDER_MOVEMENT                      OM 
+        WHERE 
+            OM.DOMAIN_NAME                                = {DOMAIN} 
+            AND OM.ORDER_RELEASE_GID                      = ORL.ORDER_RELEASE_GID
+            AND                                           EXISTS (SELECT 1 FROM FILTER_CTE FCTE WHERE FCTE.SHIPMENT_GID = OM.SHIPMENT_GID) 
+    )
 ),
 -- joins all the relevant tables bring in subquieres where summarisation is required       
 MAIN_CTE AS 
@@ -322,15 +243,15 @@ MAIN_CTE AS
     , RD(S.FIRST_EQUIPMENT_GROUP_GID)                 EQUIPMENT_TYPE
     , S.CHARGEABLE_WEIGHT                             ACTUAL_CHARGEABLE_WEIGHT
   -- SHIPMENT ATTRIBUTES *UPDATE*
-    , S.ATTRIBUTE1                                    OTM_SHIPMENT_STATUS       
-    , CASE WHEN S.ATTRIBUTE_DATE5 IS NOT NULL THEN 'COST OK' ELSE '' END                                                                          COST_OK
+    , (SELECT RD(STATUS_VALUE_GID) FROM GLOGOWNER.SHIPMENT_STATUS WHERE STATUS_TYPE_GID = {DOMAIN}||'.SHIPMENT STATUS' AND SHIPMENT_GID = S.SHIPMENT_GID)                              OTM_SHIPMENT_STATUS           
+    , CASE WHEN FCTE.DELIVERY_CONFIRMED_DATE  IS NOT NULL THEN 'DELIVERY CONFIRMED(POD RECEIVED)' ELSE '' END                                                                          DELIVERY_CONFIRMED  
     , NVL(TD(CAST(FROM_TZ(TO_TIMESTAMP(TO_CHAR(S.ATTRIBUTE_DATE10,'DD-MON-RR HH.MI.SS AM'),'DD-MON-RR HH.MI.SS AM'),'UTC') AT TIME ZONE 'Europe/Prague' AS TIMESTAMP)),TD(UTC.GET_LOCAL_DATE(S.START_TIME, S.SOURCE_LOCATION_GID)))           SHIPMENT_COLLECTION_DATE
     , NVL(TD(CAST(FROM_TZ(TO_TIMESTAMP(TO_CHAR(S.ATTRIBUTE_DATE6,'DD-MON-RR HH.MI.SS AM'),'DD-MON-RR HH.MI.SS AM'),'UTC') AT TIME ZONE 'Europe/Prague' AS TIMESTAMP)),TD(UTC.GET_LOCAL_DATE(S.END_TIME, S.DEST_LOCATION_GID)))                SHIPMENT_DELIVERY_DATE   
     --? Changes between Order and Shipment Reports
-  -- ORDER RELEASE SUB QUERIES
-    , ORL.ORDER_RELEASE_XID                                          ORDER_RELEASE_ID
-    , REPLACE(ORL.ORDER_RELEASE_TYPE_GID, ORL.DOMAIN_NAME||'.')      ORDER_TYPE
-    , NF(ORL.TOTAL_WEIGHT)|| ' '|| ORL.TOTAL_WEIGHT_UOM_CODE         GROSS_WEIGHT
+  -- ORDER RELEASE TABLE DATA
+    , ORL.ORDER_RELEASE_XID                           ORDER_RELEASE_ID
+    , RD(ORL.ORDER_RELEASE_TYPE_GID)                  ORDER_TYPE
+    , NF(ROUND(ORL.TOTAL_WEIGHT, 2))||' '|| ORL.TOTAL_WEIGHT_UOM_CODE                                                                             GROSS_WEIGHT
     -- INVOICE TABLE DATA
     , INV.INVOICE_NUMBER                              CARRIER_INVOICE_NUMBER
     , INV.NET_AMOUNT_DUE_GID                          OTM_INVOICE_CURRENCY
@@ -338,11 +259,11 @@ MAIN_CTE AS
     , INV.INVOICE_XID || DECODE(INV.CONSOLIDATION_TYPE,'CHILD',','|| RD(INV.PARENT_INVOICE_GID))                                                  OTM_INVOICE_ID
     -- INVOICE ATTRIBUTES *UPDATE*
     , INV.ATTRIBUTE2                                  OTM_INVOICE_STATUS
-    , INV.ATTRIBUTE14                                 INVOICE_CURRENCY
-    , DECODE(S.ATTRIBUTE9, 'AUDIT-ONLY', NULL, DECODE(SRCTE.FBA_PROCESS_MODE, 'MANUAL', CAST(INV.ATTRIBUTE13 AS VARCHAR(100)), CAST(IRCTE.CELATON_TOTAL_COST_WITH_VAT AS VARCHAR(100))))                                                      OTM_INVOICE_AMOUNT_GROSS
-    , CASE WHEN SRCTE.FBA_PROCESS_MODE = 'MANUAL' THEN CAST(INV.ATTRIBUTE11 AS VARCHAR(100))                 ELSE  CAST(CELATON_NET_COST AS VARCHAR(100)) END                                                                                 OTM_INVOICE_AMOUNT_NET
+    , INV.CURRENCY_GID                                INVOICE_CURRENCY
+    , DECODE(S.ATTRIBUTE9, 'AUDIT-ONLY', NULL, DECODE(SRCTE.FBA_PROCESS_MODE, 'MANUAL', CAST(INV.NET_AMT_DUE_WITH_TAX AS VARCHAR(100)), CAST(IRCTE.CELATON_TOTAL_COST_WITH_VAT AS VARCHAR(100))))                                                OTM_INVOICE_AMOUNT_GROSS
+    , CASE WHEN SRCTE.FBA_PROCESS_MODE = 'MANUAL' THEN CAST(INV.NET_AMOUNT_DUE AS VARCHAR(100))                 ELSE  CAST(CELATON_NET_COST AS VARCHAR(100)) END                                                                                 OTM_INVOICE_AMOUNT_NET
     , CASE WHEN SRCTE.FBA_PROCESS_MODE = 'MANUAL' THEN TD(INV.ATTRIBUTE_DATE4) ELSE ( SELECT TD(TO_DATE((IR.REMARK_TEXT), 'YYYYMMDD')) FROM GLOGOWNER.INVOICE_REMARK IR WHERE IR.REMARK_QUAL_IDENTIFIER = IR.DOMAIN_NAME||'.CELATON_INVOICE_RECEIPT_DATE' AND IR.INVOICE_GID = INV.INVOICE_GID ) END                                  CARRIER_INVOICE_RECEIPT_DATE
-    , CASE WHEN SRCTE.FBA_PROCESS_MODE = 'MANUAL' THEN INV.ATTRIBUTE11                                       ELSE ( SELECT SUBSTR(REMARK_TEXT,1,LENGTH(REMARK_TEXT)-4) FROM GLOGOWNER.INVOICE_REMARK IR WHERE IR.REMARK_QUAL_IDENTIFIER = IR.DOMAIN_NAME||'.CELATON_TOTAL_COST_WITH_VAT'  AND IR.INVOICE_GID = INV.INVOICE_GID  ) END CARRIER_INVOICE_VALUE_MATCHED
+    , CASE WHEN SRCTE.FBA_PROCESS_MODE = 'MANUAL' THEN NF(INV.NET_AMOUNT_DUE)                                       ELSE ( SELECT SUBSTR(REMARK_TEXT,1,LENGTH(REMARK_TEXT)-4) FROM GLOGOWNER.INVOICE_REMARK IR WHERE IR.REMARK_QUAL_IDENTIFIER = IR.DOMAIN_NAME||'.CELATON_TOTAL_COST_WITH_VAT'  AND IR.INVOICE_GID = INV.INVOICE_GID  ) END CARRIER_INVOICE_VALUE_MATCHED
   -- LOCATION DATA
   -- SHIPMENT SOURCE
     , SL.LOCATION_NAME                                COLLECTION_POINT_NAME
@@ -362,70 +283,38 @@ MAIN_CTE AS
     , IPL.LOCATION_NAME                               BILL_TO_LEGAL_NAME
     , IPL.LOCATION_ADDRESS                            BILL_TO_ADDRESS
     , (SELECT MAX(LOC_REM.REMARK_TEXT) FROM GLOGOWNER.LOCATION_REMARK  LOC_REM WHERE LOC_REM.LOCATION_GID = IPL.LOCATION_GID AND LOC_REM.REMARK_QUAL_GID = LOC_REM.DOMAIN_NAME ||'.BILL_TO_VAT_NUMBER')                                       BILL_TO_VAT_NUMBER
-    , (SELECT DISTINCT LISTAGG('Cost Centre-'|| LR.LOCATION_REFNUM_VALUE,', ') WITHIN GROUP( ORDER BY LOCATION_REFNUM_VALUE) FROM GLOGOWNER.LOCATION_REFNUM  LR WHERE LR.LOCATION_GID =  PID.INVOLVED_PARTY_CONTACT_GID  AND LR.LOCATION_REFNUM_QUAL_GID = LR.DOMAIN_NAME ||'.COST_CENTER' )                                          SALES_ORG
   -- SUB QUERIES  
   -- INVOICE SUB QUERIES
     , DECODE(S.ATTRIBUTE9, 'AUDIT-ONLY', NULL,(SELECT MAX(RD(VAT_CODE_GID)) FROM GLOGOWNER.VAT_ANALYSIS  VA WHERE VA.INVOICE_GID = INV.INVOICE_GID))                                                                                          TREATMENT_CODE
     , (SELECT SUM(TAX_AMOUNT)          FROM GLOGOWNER.VAT_ANALYSIS VA    WHERE VA.INVOICE_GID = INV.INVOICE_GID)                                                                                                                              INVOICE_VAT_AMOUNT
    -- INVOICE STATUS SUB QUERIES
-    , (SELECT I_S.UPDATE_DATE          FROM GLOGOWNER.INVOICE_STATUS I_S WHERE RD(I_S.STATUS_TYPE_GID) = 'APPROVAL' AND I_S.INVOICE_GID = INV.INVOICE_GID)                                                                                    INVOICE_STATUS_DATE
+    , (SELECT I_S.UPDATE_DATE          FROM GLOGOWNER.INVOICE_STATUS I_S WHERE I_S.STATUS_TYPE_GID = {DOMAIN}||'.APPROVAL' AND I_S.INVOICE_GID = INV.INVOICE_GID)                                                                             INVOICE_STATUS_DATE
   -- LOCATION_REMARKS REMARK SUB QUERIES        
-    , (SELECT MAX(LR.REMARK_TEXT)      FROM GLOGOWNER.LOCATION_REMARK LR WHERE RD(LR.REMARK_QUAL_GID) = 'VAT_NUMBER' AND LR.LOCATION_GID = SPL.LOCATION_GID)                                                                                  CARRIER_VAT_NUMBER
+    , (SELECT MAX(LR.REMARK_TEXT)      FROM GLOGOWNER.LOCATION_REMARK LR WHERE LR.REMARK_QUAL_GID = {DOMAIN}||'.VAT_NUMBER' AND LR.LOCATION_GID = SPL.LOCATION_GID)                                                                           CARRIER_VAT_NUMBER
   -- RATE SUB QUERIES       
     , (SELECT TD(RG.EFFECTIVE_DATE)    FROM GLOGOWNER.RATE_GEO RG WHERE RG.RATE_GEO_GID = S.RATE_GEO_GID)                                         RATES_EFFECTIVE_FROM
     , (SELECT TD(RG.EXPIRATION_DATE)   FROM GLOGOWNER.RATE_GEO RG WHERE RG.RATE_GEO_GID = S.RATE_GEO_GID)                                         RATES_EFFECTIVE_TO 
-  -- Underbilling calculations  
-    , ROUND(SCCTE.APPROVED_INVOICE_NET_AMOUNT - S.TOTAL_ACTUAL_COST,2)                                                                            UNDER_BILLED_AMOUNT
-    , CASE WHEN ROUND(SCCTE.APPROVED_INVOICE_NET_AMOUNT - S.TOTAL_ACTUAL_COST ,2) <0 THEN 'YES' ELSE 'NO' END                                     UNDER_BILLED 
   --? Changes between Order and Shipment Reports     
   -- ALLOCATION SUB QUERIES      
-    , (SELECT ROUND(SUM( A.TOTAL_ALLOC_COST / TO_CURRENCY('EUR' , A.TOTAL_COST_CURRENCY_GID, A.EXCHANGE_RATE_DATE, A.EXCHANGE_RATE_GID)*TO_CURRENCY( 'EUR', SRCTE.OTM_CURRENCY, A.EXCHANGE_RATE_DATE, A.EXCHANGE_RATE_GID)),2) FROM GLOGOWNER.ALLOCATION_BASE AB, GLOGOWNER.ALLOCATION  A WHERE AB.ALLOC_TYPE_QUAL_GID = 'PLANNING' AND AB.SHIPMENT_GID = S.SHIPMENT_GID AND A.SHIPMENT_GID = AB.SHIPMENT_GID AND A.ALLOC_SEQ_NO = AB.ALLOC_SEQ_NO AND A.ORDER_RELEASE_GID = ORL.ORDER_RELEASE_GID) APPORTIONED_OTM_SHIPMENT
+   , S.TOTAL_ACTUAL_COST *  (SELECT SUM(AC.COST_APPORTION_PERCENTAGE) FROM ALLOCATION_CTE AC WHERE AC.SHIPMENT_GID = S.SHIPMENT_GID AND AC.ORDER_RELEASE_GID = ORL.ORDER_RELEASE_GID)                                                         APPORTIONED_OTM_SHIPMENT
   -- SHIPMENT REFNUM CTE SUB QUERIES
     , SRCTE.OTM_CURRENCY                              MASTER_RATE_CURRENCY
     , SRCTE.FBA_PROCESS_MODE
-    , SRCTE.PMER_EXCHANGE_RATE
-    , SRCTE.LANE_ID
-    , SRCTE.FBA_RESPONSIBILITY_STATUS
+    , NVL(SRCTE.PMER_EXCHANGE_RATE , TO_CURRENCY('GBP',S.CURRENCY_GID, S.EXCHANGE_RATE_DATE, S.EXCHANGE_RATE_GID ))	                              PMER_EXCHANGE_RATE
+    --, SRCTE.LANE_ID
+    , SL.COUNTRY_CODE || '_' || DL.COUNTRY_CODE || '_' || (SELECT DECODE(T.MODE_TYPE,'TL','ROAD', T.MODE_TYPE) FROM GLOGOWNER.TRANSPORT_MODE T WHERE T.TRANSPORT_MODE_GID =S.TRANSPORT_MODE_GID)                                              LANE_ID
+    --, SRCTE.FBA_RESPONSIBILITY_STATUS
     , SRCTE.SHIPMENT_TOTAL_TAX  
   -- SHIPMENT COST CTE SUB QUERIES 
     , CC.DELAYS_COST
     , CC.CANCELLATION_CHARGE
     , CC.MISCELLANEOUS
     , CC.FUEL_SURCHARGE_COST
-    , ROUND(CC.BASE_COST,2)                           SHIPMENT_BASE_COST
-    , CC.ACCESSORIAL                                  SHIPMENT_ACCESSORIAL_COST
-  -- SHIPMENT COST CTE SUB QUERIES
-    , SCCTE.OTM_SHIPMENT_APPROVED_VALUE
-    , SCCTE.OTM_SHIPMENT_ACCRUAL_VALUE
-    , SCCTE.OTM_SHIPMENT_REJECTED_VALUE
+    , ROUND(CC.BASE_COST,2)                             SHIPMENT_BASE_COST
+    , CC.ACCESSORIAL                                    SHIPMENT_ACCESSORIAL_COST
+
   -- Filter CTE subquery fields 
-    , FCTE.FINAL_COST_OK_DATE
-    , FCTE.ORIGIN_COST_OK_DATE
-  -- Tax Mapping
-    , TCTE.IIBB_CABA_AMOUNT
-    , TCTE.IIBB_BA_AMOUNT
-    , TCTE.CGST_AMOUNT
-    , TCTE.IGST_AMOUNT
-    , TCTE.SGST_AMOUNT
-    , TCTE.PIS_AMOUNT
-    , TCTE.ISS_AMOUNT
-    , TCTE.COFINS_AMOUNT
-    , TCTE.IOF_AMOUNT
-    , TCTE.RETENTION_AMOUNT
-    , TCTE.WITHHOLDING_AMOUNT
-    , TCTE.VATS_AMOUNT
-    , TCTE.IIBB_CABA_PERCENTAGE
-    , TCTE.IIBB_BA_PERCENTAGE
-    , TCTE.CGST_PERCENTAGE
-    , TCTE.IGST_PERCENTAGE
-    , TCTE.SGST_PERCENTAGE
-    , TCTE.PIS_PERCENTAGE
-    , TCTE.ISS_PERCENTAGE
-    , TCTE.COFINS_PERCENTAGE
-    , TCTE.IOF_PERCENTAGE
-    , TCTE.RETENTION_PERCENTAGE
-    , TCTE.WITHHOLDING_PERCENTAGE
-    , TCTE.VATS_PERCENTAGE
+    , FCTE.DELIVERY_CONFIRMED_DATE 
     , IRCTE.CELATON_TOTAL_COST_WITH_VAT
     , IRCTE.CELATON_NET_COST
     FROM
@@ -442,17 +331,15 @@ MAIN_CTE AS
       , LOCATION_CTE                                    DL
       , LOCATION_CTE                                    SPL
       , LOCATION_CTE                                    IPL
-      , TAX_VALUES_CTE                                  TCTE
-      , INVOICE_REFNUM_CTE                              IRCTE
-      , SHIP_COST_SPLIT                                 SCCTE
+      , INVOICE_REMARK_CTE                              IRCTE
       , SHIP_REFNUM_CTE                                 SRCTE
 
     WHERE
       S.DOMAIN_NAME                                     = {DOMAIN}
-      AND SIP.INVOLVED_PARTY_QUAL_GID                   = S.DOMAIN_NAME ||'.BILL_TO' 
+      AND SIP.INVOLVED_PARTY_QUAL_GID                   = 'BILL_TO' 
       AND S.SHIPMENT_GID                                = SIP.SHIPMENT_GID
       AND S.SHIPMENT_GID                                = PID.SHIPMENT_GID(+)
-      AND PID.INVOLVED_PARTY_QUAL_GID                   = S.DOMAIN_NAME ||'.PLANT_ID'
+      AND PID.INVOLVED_PARTY_QUAL_GID (+)               = S.DOMAIN_NAME ||'.SEND_TO'
       AND S.RATE_OFFERING_GID                           = RO.RATE_OFFERING_GID (+) 
         -- CTE JOINS
       AND S.SHIPMENT_GID                                = SRCTE.SHIPMENT_GID  
@@ -464,12 +351,10 @@ MAIN_CTE AS
       AND INV.INVOICE_GID                               = FCTE.INVOICE_GID
       AND ORL.ORDER_RELEASE_GID                         = FCTE.ORDER_RELEASE_GID
       AND S.SHIPMENT_GID                                = FCTE.SHIPMENT_GID
-      AND COALESCE(INV.PARENT_INVOICE_GID,INV.INVOICE_GID)= TCTE.PARENT_INVOICE_GID (+)
       AND INV.INVOICE_GID                               = IRCTE.INVOICE_GID (+)
-      AND S.SHIPMENT_GID                                = SCCTE.SHIPMENT_GID
 -- WHERE CLAUSE WITH PARAMETERS
       AND ((SIP.INVOLVED_PARTY_CONTACT_GID              IN ({BILL TO LEGAL NAME})) OR {BILL TO LEGAL NAME} IS NULL)
-      AND ({TREATMENT CODE}                             IN ( SELECT REPLACE(VAT_CODE_GID,VA.DOMAIN_NAME ||'.') FROM GLOGOWNER.VAT_ANALYSIS VA WHERE VA.INVOICE_GID = INV.INVOICE_GID) OR {TREATMENT CODE} IS NULL )
+      AND ({TREATMENT CODE}                             IN ( SELECT {DOMAIN}||'.'||VAT_CODE_GID,VA.DOMAIN_NAME ||'.') FROM GLOGOWNER.VAT_ANALYSIS VA WHERE VA.INVOICE_GID = INV.INVOICE_GID) OR {TREATMENT CODE} IS NULL )
       AND ({BUSINESS UNIT}                              IN PID.INVOLVED_PARTY_CONTACT_GID  OR {BUSINESS UNIT} IS NULL )
       AND ({CARRIER NAME}                               IN SPL.LOCATION_NAME OR {CARRIER NAME} IS NULL)
       AND ({FBA RESPONSIBILITY STATUS}                  IN SRCTE.FBA_RESPONSIBILITY_STATUS OR {FBA RESPONSIBILITY STATUS} IS NULL)
@@ -479,11 +364,9 @@ SELECT
     OTM_SHIPMENT_NUMBER                               "OTM Shipment ID"
   , ORDER_RELEASE_ID                                  "Order Release"
   , ORDER_TYPE                                        "Order Type"
-  , SALES_ORG                                         "sales Org"
-  , FBA_RESPONSIBILITY_STATUS                         "FBA OTM Responsibility Status"
+  --, FBA_RESPONSIBILITY_STATUS                         "FBA OTM Responsibility Status"
   , BILL_TO_LEGAL_NAME                                "Bill to Legal Name"
   , BILL_TO_ADDRESS                                   "Bill to Address"
-  , BILL_TO_VAT_NUMBER                                "Bill to VAT Number"
   , OTM_INVOICE_ID                                    "Carrier Invoice ID"
   , CARRIER_INVOICE_NUMBER                            "Carrier Invoice Number"
   , TD(CARRIER_INVOICE_DATE)                          "Carrier Invoice Date"
@@ -511,57 +394,29 @@ SELECT
   , GROSS_WEIGHT                                      "Gross Weight KG"
   , NF(ACTUAL_CHARGEABLE_WEIGHT)                      "Base Actual Weight KG"
   , NF(SHIPMENT_BASE_COST)                            "OTM Shipment Freight Cost (BASE)"
+  , NF(SHIPMENT_ACCESSORIAL_COST)                     "OTM Shipment Freight Accessorial Cost"
   , NF(FUEL_SURCHARGE_COST)                           "OTM Shipment Fuel Surcharge Cost"
+  , NF(SHIPMENT_TOTAL_ACTUAL_COST)                    "OTM Shipment Total Freight Cost"
   , NF(DELAYS_COST)                                   "OTM Shipment Delays total (Inc demurrage/waiting time)"
   , NF(CANCELLATION_CHARGE)                           "OTM Shipment Cancellation Cost"
   , NF(MISCELLANEOUS)                                 "OTM Shipment Miscellaneous Cost"
-  , NF(SHIPMENT_ACCESSORIAL_COST)                     "OTM Shipment Freight Accessorial Cost"
-  , NF(SHIPMENT_TOTAL_ACTUAL_COST)                    "OTM Shipment Total Freight Cost"
-  , NF(SHIPMENT_TOTAL_TAX)                            "OTM Order / Shipment Total Tax Value"
-  , NF(OTM_SHIPMENT_APPROVED_VALUE)                   "OTM Shipment Approved Value"
-  , NF(OTM_SHIPMENT_ACCRUAL_VALUE)                    "OTM Shipment Accrual Value"
---, NF(UNDER_BILLED_AMOUNT)                           "OTM Shipment Underbilled Amount"
---, NF(OTM_SHIPMENT_REJECTED_VALUE)                   "OTM Shipment Rejected Value"
-  , NF(APPORTIONED_OTM_SHIPMENT)                      "OTM Shipment Apportioned Value"
+  , NF(SHIPMENT_TOTAL_ACTUAL_COST)                    "OTM Order / Shipment Total Cost"
+  , NF(APPORTIONED_OTM_SHIPMENT)                      "OTM Shipment Apportioned %"
   , MASTER_RATE_CURRENCY                              "OTM Shipment Currency"
-  , NF(OTM_INVOICE_AMOUNT_NET)                        "Carrier Invoice Amount(Net)"
-  , NF(INVOICE_VAT_AMOUNT)                            "Carrier Invoice Total Tax Value"
-  , NF(OTM_INVOICE_AMOUNT_GROSS)                      "Carrier Invoice Gross Value"
-  , VATS_PERCENTAGE                                   "Carrier Invoice VAT Percentage"
-  , VATS_AMOUNT                                       "Carrier Invoice VAT Amount Value"
-  , CGST_PERCENTAGE                                   "Carrier Invoice CGST Percentage"
-  , CGST_AMOUNT                                       "Carrier Invoice CGST Value"
-  , IGST_PERCENTAGE                                   "Carrier Invoice IGST Percentage"
-  , IGST_AMOUNT                                       "Carrier Invoice IGST Value"
-  , SGST_PERCENTAGE                                   "Carrier Invoice SGST Percentage"
-  , SGST_AMOUNT                                       "Carrier Invoice SGST Value"
-  , IIBB_CABA_PERCENTAGE                              "Carrier Invoice IIBB CABA Percentage"
-  , IIBB_CABA_AMOUNT                                  "Carrier Invoice IIBB CABA Value"
-  , IIBB_BA_PERCENTAGE                                "Carrier Invoice IIBB BA Percentage"
-  , IIBB_BA_AMOUNT                                    "Carrier Invoice IIBB BA Value" 
-  , IOF_PERCENTAGE                                    "Carrier Invoice IOF Percentage"
-  , IOF_AMOUNT                                        "Carrier Invoice IOF Value"
-  , PIS_PERCENTAGE                                    "Carrier Invoice PIS Percentage"
-  , PIS_AMOUNT                                        "Carrier Invoice PIS Value"
-  , ISS_PERCENTAGE                                    "Carrier Invoice ISS Percentage"
-  , ISS_AMOUNT                                        "Carrier Invoice ISS Value"
-  , COFINS_PERCENTAGE                                 "Carrier Invoice COFINS Percentage"
-  , COFINS_AMOUNT                                     "Carrier Invoice COFINS Value"
-  , RETENTION_PERCENTAGE                              "Carrier Invoice Retention Percentage"
-  , RETENTION_AMOUNT                                  "Carrier Invoice Retention Value"
-  , WITHHOLDING_PERCENTAGE                            "Carrier Invoice Withholding Tax Percentage"        
-  , WITHHOLDING_AMOUNT                                "Carrier Invoice Withholding Tax Value"
-  , NF(CARRIER_INVOICE_VALUE_MATCHED)                 "Carrier Invoice Net Value Matched against Order / Shipment Net Value"
+  , DELIVERY_CONFIRMED                                 "Delivery Confirmed Milestone"
+  , TD(DELIVERY_CONFIRMED_DATE)                       "Delivery Confirmed Date"
+  , FBA_PROCESS_MODE                                  "FBA Process Mode"
+  , NF(CARRIER_INVOICE_VALUE_MATCHED)                 "Carrier Invoice Value Matched against Order / Shipment"
   , OTM_INVOICE_CURRENCY                              "Carrier Invoice Shipment Currency"
-  , COST_OK                                           "Cost OK Milestone"
-  , TD(FINAL_COST_OK_DATE)                            "Cost Ok Date"
+  , NF(OTM_INVOICE_AMOUNT_NET)                        "OTM Invoice Amount(Net)"
+  , INVOICE_VAT_AMOUNT                                "OTM Invoice VAT Amount"
+  , NF(OTM_INVOICE_AMOUNT_GROSS)                      "OTM Invoice Amount With VAT(GROSS)"
+  , TREATMENT_CODE                                    "Carrier Invoice VAT Treatment Code"
   , OTM_INVOICE_STATUS                                "OTM Invoice status"
   , TD(INVOICE_STATUS_DATE)                           "Invoice “Approved” status Date"
   , OTM_SHIPMENT_STATUS                               "Shipment Status"
-  , FBA_PROCESS_MODE                                  "FBA Process Mode"
-  , PMER_EXCHANGE_RATE                                "PMER Exchange rate (master carrier currency to EURO)"
-  , TD(ORIGIN_COST_OK_DATE)                           "Origin Cost OK Date"
-  , TD(FINAL_COST_OK_DATE)                            "Final Cost OK Date"
+  , PMER_EXCHANGE_RATE                                "PMER Exchange rate (master carrier currency to GBP)"
+
 FROM 
   MAIN_CTE
 ORDER BY  

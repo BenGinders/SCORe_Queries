@@ -162,6 +162,7 @@ SHIP_COST_CTE AS (
     , SC.DOMAIN_NAME
     , SC.COST_TYPE
     , SC.ACCESSORIAL_CODE_GID
+    , SC.ADJUSTMENT_REASON_GID
     , AICTE.INVOICE_APPROVED_DATE
     , AICTE.INVOICE_REJECTED_DATE
     , AICTE.APPROVED_INVOICE_NET_AMOUNT
@@ -201,8 +202,7 @@ FILTER_CTE AS
        ISCTE.SHIPMENT_GID
      , ISCTE.ORDER_RELEASE_GID
      , ISCTE.INVOICE_GID
-     , (SELECT MAX(IES.EVENT_RECEIVED_DATE) FROM GLOGOWNER.IE_SHIPMENTSTATUS IES WHERE RD(IES.STATUS_CODE_GID) = 'COST_OK' AND IES.SHIPMENT_GID =ISCTE.SHIPMENT_GID)                                                                         FINAL_COST_OK_DATE
-     , (SELECT MAX(IES.EVENT_RECEIVED_DATE) FROM GLOGOWNER.IE_SHIPMENTSTATUS IES WHERE RD(IES.STATUS_CODE_GID) = 'DEPARTED_ORIGIN_PORT_COST_OK' AND IES.SHIPMENT_GID =ISCTE.SHIPMENT_GID)                                                    ORIGIN_COST_OK_DATE                
+     , (SELECT MAX(IES.EVENTDATE) FROM GLOGOWNER.IE_SHIPMENTSTATUS IES WHERE RD(IES.STATUS_CODE_GID) = 'DELIVERY CONFIRMED(POD RECEIVED)' AND IES.SHIPMENT_GID =ISCTE.SHIPMENT_GID)                                                DELIVERY_CONFIRMED_DATE             
     FROM  
        INV_SHIP_CTE                                   ISCTE
      , GLOGOWNER.SHIPMENT                             S
@@ -213,8 +213,7 @@ FILTER_CTE AS
                                                                                         AND TRUNC(TO_DATE(TO_CHAR({COLLECTION TO DATE},'YYYY-MM-DD HH24:MI:SS'),'YYYY-MM-DD HH24:MI:SS'))
       AND (TRUNC(TO_DATE(TO_CHAR({COLLECTION TO DATE},'YYYY-MM-DD HH24:MI:SS'),'YYYY-MM-DD HH24:MI:SS'))
           - TRUNC(TO_DATE(TO_CHAR({COLLECTION FROM DATE},'YYYY-MM-DD HH24:MI:SS'),'YYYY-MM-DD HH24:MI:SS'))) <= 365
-      AND NOT EXISTS                                  (SELECT 1 FROM GLOGOWNER.IE_SHIPMENTSTATUS IES,GLOGOWNER.SS_STATUS_HISTORY SSH WHERE RD(IES.STATUS_CODE_GID) = 'COST_OK' AND SSH.SHIPMENT_GID = S.SHIPMENT_GID AND IES.I_TRANSACTION_NO = SSH.I_TRANSACTION_NO)
-      AND RD(S.TRANSPORT_MODE_GID)                    NOT IN ('OCEAN-FCL','OCEAN-LCL','OCEAN','VESSEL-CO','OCEAN-FCL-ROAD','OCEAN-LCL-ROAD')
+      AND NOT EXISTS                                  (SELECT 1 FROM GLOGOWNER.IE_SHIPMENTSTATUS IES,GLOGOWNER.SS_STATUS_HISTORY SSH WHERE RD(IES.STATUS_CODE_GID) = 'DELIVERY CONFIRMED(POD RECEIVED)' AND SSH.SHIPMENT_GID = S.SHIPMENT_GID AND IES.I_TRANSACTION_NO = SSH.I_TRANSACTION_NO)
   ),
 COST_CATEGORY_CTE AS
 (
@@ -232,10 +231,10 @@ COST_CATEGORY_CTE AS
           SHIPMENT_GID
         , CASE WHEN COST_TYPE = 'B'    THEN 'BASE'
                WHEN RD(ACCESSORIAL_CODE_GID)  LIKE '%FUEL%'         OR ACCESSORIAL_CODE_GID LIKE '%FSC%'            OR ACCESSORIAL_CODE_GID LIKE '%BAF%' THEN 'FUEL'
-               WHEN RD(ACCESSORIAL_CODE_GID)  LIKE '%CANCELLATION%' OR ACCESSORIAL_CODE_GID = 'CANC_CHARGES'                                             THEN 'CANCEL'
-               WHEN RD(ACCESSORIAL_CODE_GID) IN ('.LEG2_O_DEM_FEE_PER_DAY','.LEG2_IMP_DET_FEES_PER_DAY','.LEG2_IMP_DEM_FEES_PER_DAY','.WAITING_TIME_CHARGE_PER_HR','.DETENTION_DEMURRAGE','.LEG2_O_DET_FEE_PER_DAY') THEN 'DELAY'
+               WHEN ADJUSTMENT_REASON_GID IN ('A1','A2','A3','A4','A5')                                                                                  THEN 'CANCEL'
+               WHEN ADJUSTMENT_REASON_GID IN ('B1','B2','B3','B5','B7','B9','B10','A4','A5')                                                             THEN 'DELAY'
                ELSE 'OTHER' END                       CODE
-        , COST                                     
+        , COST                                
       FROM 
         SHIP_COST_CTE
     )
@@ -286,7 +285,7 @@ MAIN_CTE AS
     , S.CHARGEABLE_WEIGHT                             ACTUAL_CHARGEABLE_WEIGHT
   -- SHIPMENT ATTRIBUTES *UPDATE* 
     , S.ATTRIBUTE1                                    OTM_SHIPMENT_STATUS
-    , CASE WHEN S.ATTRIBUTE_DATE5 IS NOT NULL THEN 'COST OK' ELSE '' END                                                                          COST_OK  
+    , CASE WHEN FCTE.DELIVERY_CONFIRMED_DATE  IS NOT NULL THEN 'DELIVERY CONFIRMED(POD RECEIVED)' ELSE '' END                                                                          DELIVERY_CONFIRMED  
     , NVL(TD(CAST(FROM_TZ(TO_TIMESTAMP(TO_CHAR(S.ATTRIBUTE_DATE10,'DD-MON-RR HH.MI.SS AM'),'DD-MON-RR HH.MI.SS AM'),'UTC') AT TIME ZONE 'Europe/Prague' AS TIMESTAMP)),TD(UTC.GET_LOCAL_DATE(S.START_TIME, S.SOURCE_LOCATION_GID)))           SHIPMENT_COLLECTION_DATE
     , NVL(TD(CAST(FROM_TZ(TO_TIMESTAMP(TO_CHAR(S.ATTRIBUTE_DATE6,'DD-MON-RR HH.MI.SS AM'),'DD-MON-RR HH.MI.SS AM'),'UTC') AT TIME ZONE 'Europe/Prague' AS TIMESTAMP)),TD(UTC.GET_LOCAL_DATE(S.END_TIME, S.DEST_LOCATION_GID)))                SHIPMENT_DELIVERY_DATE 
     --? Changes between Order and Shipment Reports 
@@ -362,8 +361,7 @@ MAIN_CTE AS
     , SCCTE.OTM_SHIPMENT_ACCRUAL_VALUE
     , SCCTE.OTM_SHIPMENT_REJECTED_VALUE
    -- Filter CTE subquery fields 
-    , FCTE.FINAL_COST_OK_DATE
-    , FCTE.ORIGIN_COST_OK_DATE
+    , FCTE.DELIVERY_CONFIRMED_DATE 
     , IRCTE.CELATON_TOTAL_COST_WITH_VAT
     , IRCTE.CELATON_NET_COST
   FROM
@@ -386,10 +384,10 @@ MAIN_CTE AS
 
     WHERE 
       S.DOMAIN_NAME                                     = {DOMAIN}
-      AND SIP.INVOLVED_PARTY_QUAL_GID                   = S.DOMAIN_NAME ||'.BILL_TO' 
+      AND SIP.INVOLVED_PARTY_QUAL_GID                   = 'BILL_TO' 
       AND S.SHIPMENT_GID                                = SIP.SHIPMENT_GID
       AND S.SHIPMENT_GID                                = PID.SHIPMENT_GID(+)
-      AND PID.INVOLVED_PARTY_QUAL_GID (+)               = S.DOMAIN_NAME ||'.PLANT_ID'
+      AND PID.INVOLVED_PARTY_QUAL_GID (+)               = S.DOMAIN_NAME ||'.SEND_TO'
       AND S.RATE_OFFERING_GID                           = RO.RATE_OFFERING_GID (+) 
     -- CTE JOINS
       AND S.SHIPMENT_GID                                = SRCTE.SHIPMENT_GID
@@ -447,33 +445,29 @@ SELECT
   , GROSS_WEIGHT                                      "Gross Weight KG"
   , NF(ACTUAL_CHARGEABLE_WEIGHT)                      "Base Actual Weight KG"
   , NF(SHIPMENT_BASE_COST)                            "OTM Shipment Freight Cost (BASE)"
+  , NF(SHIPMENT_ACCESSORIAL_COST)                     "OTM Shipment Freight Accessorial Cost"
   , NF(FUEL_SURCHARGE_COST)                           "OTM Shipment Fuel Surcharge Cost"
+  , NF(SHIPMENT_TOTAL_ACTUAL_COST)                    "OTM Shipment Total Freight Cost"
   , NF(DELAYS_COST)                                   "OTM Shipment Delays total (Inc demurrage/waiting time)"
   , NF(CANCELLATION_CHARGE)                           "OTM Shipment Cancellation Cost"
   , NF(MISCELLANEOUS)                                 "OTM Shipment Miscellaneous Cost"
-  , NF(SHIPMENT_ACCESSORIAL_COST)                     "OTM Shipment Freight Accessorial Cost"
-  , NF(SHIPMENT_TOTAL_ACTUAL_COST)                    "OTM Shipment Total Freight Cost"
-  , NF(SHIPMENT_TOTAL_TAX)                            "OTM Order / Shipment Total Tax Value"
- -- , NF(OTM_SHIPMENT_APPROVED_VALUE)                   "OTM Shipment Approved Value"
- -- , NF(OTM_SHIPMENT_ACCRUAL_VALUE)                    "OTM Shipment Accrual Value"
---, NF(UNDER_BILLED_AMOUNT)                           "OTM Shipment Underbilled Amount"
---, NF(OTM_SHIPMENT_REJECTED_VALUE)                   "OTM Shipment Rejected Value"
-  , NF(APPORTIONED_OTM_SHIPMENT)                      "OTM Shipment Apportioned Value"
-  --, MASTER_RATE_CURRENCY                              "OTM Shipment Currency"
-  , NF(OTM_INVOICE_AMOUNT_NET)                        "Carrier Invoice Amount(Net)"
---  , NF(INVOICE_VAT_AMOUNT)                            "Carrier Invoice Total Tax Value"
-  , NF(OTM_INVOICE_AMOUNT_GROSS)                      "Carrier Invoice Gross Value"
-  , NF(CARRIER_INVOICE_VALUE_MATCHED)                 "Carrier Invoice Net Value Matched against Order / Shipment Net Value"
+  , NF(SHIPMENT_TOTAL_ACTUAL_COST)                    "OTM Order / Shipment Total Cost"
+  , NF(APPORTIONED_OTM_SHIPMENT)                      "OTM Shipment Apportioned %"
+  , MASTER_RATE_CURRENCY                              "OTM Shipment Currency"
+  , DELIVERY_CONFIRMED_DATE                           "Delivery Confirmed Milestone"
+  , TD(DELIVERY_CONFIRMED_DATE)                       "Delivery Confirmed Date"
+  , FBA_PROCESS_MODE                                  "FBA Process Mode"
+  , NF(CARRIER_INVOICE_VALUE_MATCHED)                 "Carrier Invoice Value Matched against Order / Shipment"
   , OTM_INVOICE_CURRENCY                              "Carrier Invoice Shipment Currency"
-  , COST_OK                                           "Cost OK Milestone"
-  , TD(FINAL_COST_OK_DATE)                            "Cost Ok Date"
+  , NF(OTM_INVOICE_AMOUNT_NET)                        "OTM Invoice Amount(Net)"
+  , INVOICE_VAT_AMOUNT                                "OTM Invoice VAT Amount"
+  , NF(OTM_INVOICE_AMOUNT_GROSS)                      "OTM Invoice Amount With VAT(GROSS)"
+  , TREATMENT_CODE                                    "Carrier Invoice VAT Treatment Code"
   , OTM_INVOICE_STATUS                                "OTM Invoice status"
   , TD(INVOICE_STATUS_DATE)                           "Invoice “Approved” status Date"
   , OTM_SHIPMENT_STATUS                               "Shipment Status"
-  , FBA_PROCESS_MODE                                  "FBA Process Mode"
   , PMER_EXCHANGE_RATE                                "PMER Exchange rate (master carrier currency to EURO)"
-  , TD(ORIGIN_COST_OK_DATE)                           "Origin Cost OK Date"
-  , TD(FINAL_COST_OK_DATE)                            "Final Cost OK Date"
+
 FROM 
   MAIN_CTE
 ORDER BY  

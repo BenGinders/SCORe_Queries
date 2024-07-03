@@ -329,7 +329,7 @@ MAIN_CTE AS
   -- ORDER RELEASE TABLE DATA  
     , (SELECT LISTAGG(REPLACE(ORL.ORDER_RELEASE_TYPE_GID,ORL.DOMAIN_NAME||'.'), ',') WITHIN GROUP( ORDER BY 1 ) FROM GLOGOWNER.ORDER_RELEASE  ORL, GLOGOWNER.ORDER_MOVEMENT OM WHERE ORL.ORDER_RELEASE_GID = OM.ORDER_RELEASE_GID AND OM.SHIPMENT_GID = S.SHIPMENT_GID )                                      ORDER_TYPE
     , (SELECT LISTAGG(''''||ORL.ORDER_RELEASE_XID||'''', ',') WITHIN GROUP( ORDER BY 1) FROM GLOGOWNER.ORDER_RELEASE  ORL, GLOGOWNER.ORDER_MOVEMENT OM WHERE ORL.ORDER_RELEASE_GID = OM.ORDER_RELEASE_GID  AND OM.SHIPMENT_GID = S.SHIPMENT_GID)                                                              ORDER_RELEASE_ID    
-    , NF(S.TOTAL_WEIGHT)|| ' '|| S.TOTAL_WEIGHT_UOM_CODE                                                                                         GROSS_WEIGHT
+    , NF(ROUND(S.TOTAL_WEIGHT,2))|| ' '|| S.TOTAL_WEIGHT_UOM_CODE                                                                                GROSS_WEIGHT
   -- INVOICE TABLE DATA  
     , INV.INVOICE_NUMBER                              CARRIER_INVOICE_NUMBER
     , INV.NET_AMOUNT_DUE_GID                          OTM_INVOICE_CURRENCY
@@ -548,7 +548,7 @@ SELECT
   , RETENTION_AMOUNT                                  "Carrier Invoice Retention Value"
   , WITHHOLDING_PERCENTAGE                            "Carrier Invoice Withholding Tax Percentage"        
   , WITHHOLDING_AMOUNT                                "Carrier Invoice Withholding Tax Value"
-  , NF(CARRIER_INVOICE_VALUE_MATCHED)                 "Carrier Invoice Net Value Matched against Order / Shipment Net Value"
+  , NF(OTM_INVOICE_AMOUNT_NET)                        "Carrier Invoice Net Value Matched against Order / Shipment Net Value"
   , OTM_INVOICE_CURRENCY                              "Carrier Invoice Shipment Currency"
   , COST_OK                                           "Cost OK Milestone"
   , TD(FINAL_COST_OK_DATE)                            "Cost Ok Date"
